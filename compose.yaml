@@ -1,0 +1,96 @@
+name: lab1-q10
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: lake
+      POSTGRES_PASSWORD: lake_local_password
+      POSTGRES_DB: lakekeeper
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lake -d lakekeeper"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  minio:
+    image: alpine/minio:RELEASE.2025-10-15T17-29-55Z
+    command:
+      - server
+      - /data
+      - --console-address
+      - ":9001"
+    environment:
+      MINIO_ROOT_USER: labadmin
+      MINIO_ROOT_PASSWORD: lab_local_password
+    ports:
+      - "127.0.0.1:19000:9000"
+      - "127.0.0.1:19001:9001"
+    volumes:
+      - ./minio_data:/data
+
+  migrate:
+    image: quay.io/lakekeeper/catalog:latest
+    environment:
+      LAKEKEEPER__PG_ENCRYPTION_KEY: local-lab-encryption-key-change-me
+      LAKEKEEPER__PG_DATABASE_URL_READ: postgresql://lake:lake_local_password@postgres:5432/lakekeeper
+      LAKEKEEPER__PG_DATABASE_URL_WRITE: postgresql://lake:lake_local_password@postgres:5432/lakekeeper
+      RUST_LOG: info
+    command:
+      - migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  lakekeeper:
+    image: quay.io/lakekeeper/catalog:latest
+    environment:
+      LAKEKEEPER__PG_ENCRYPTION_KEY: local-lab-encryption-key-change-me
+      LAKEKEEPER__PG_DATABASE_URL_READ: postgresql://lake:lake_local_password@postgres:5432/lakekeeper
+      LAKEKEEPER__PG_DATABASE_URL_WRITE: postgresql://lake:lake_local_password@postgres:5432/lakekeeper
+      RUST_LOG: info
+    command:
+      - serve
+    ports:
+      - "127.0.0.1:18181:8181"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  trino:
+    image: trinodb/trino:484
+    ports:
+      - "127.0.0.1:18080:8080"
+    volumes:
+      - ./config/trino/catalog:/etc/trino/catalog:ro
+      - ./config/trino/config.properties:/etc/trino/config.properties:ro
+      - ./config/trino/jvm.config:/etc/trino/jvm.config:ro
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/v1/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+
+  bi:
+    build: ./bi
+    ports:
+      - "127.0.0.1:18088:8501"
+    depends_on:
+      trino:
+        condition: service_healthy
+    volumes:
+      - ./results:/results
+
+volumes:
+  pgdata: {}

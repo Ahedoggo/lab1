@@ -1,0 +1,15 @@
+﻿pycache/
+*.py[cod]
+.venv/
+venv/
+.env
+*.log
+minio_data/
+results/*.parquet
+results/*.json
+results/*.csv
+results/*.txt
+!results/bi_check.json
+!results/benchmark.csv
+!results/gold_top20.csv
+!results/queries.jsonl
